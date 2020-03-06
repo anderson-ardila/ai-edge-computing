@@ -1,4 +1,8 @@
+import json
+import time
+
 import matplotlib.pyplot as plt
+import paho.mqtt.client as mqtt
 import pandas as pd
 from sklearn.ensemble import AdaBoostClassifier, RandomForestClassifier
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
@@ -17,25 +21,14 @@ class IA:
         return self.test.head()
 
     def getDimensionTraining(self):
-        return self.train.shape()
+        return self.train.shape
 
     def getDimensionTest(self):
         return self.test.shape
 
-    def graph(self):
-        plt.subplot(2, 2, 1)
-        plt.plot(self.train.iloc[0, :187])
-
-        plt.subplot(2, 2, 2)
-        plt.plot(self.train.iloc[1, :187])
-
-        plt.subplot(2, 2, 3)
-        plt.plot(self.train.iloc[2, :187])
-
-        plt.subplot(2, 2, 4)
-        plt.plot(self.train.iloc[3, :187])
-
-        print(self.train[187][0], self.train[187][1], self.train[187][2], self.train[187][3])
+    def graph(self, data):
+        plt.plot(data[:len(data)])
+        plt.show()
 
     def getNumberClasses(self):
         return self.train[187].value_counts()
@@ -114,7 +107,7 @@ class Disease:
     __nDisease = {0.0: 'Normal', 1.0: 'Supraventricular Premature', 2.0: 'Premature VC', 3.0: 'Fusion',
                   4.0: 'Unclassifiable Beat'}
 
-    def __init__(self, name, probability):
+    def __init__(self, name="", probability=0):
         self.name = self.__nDisease[name]
         self.probability = probability
 
@@ -128,7 +121,66 @@ class Disease:
         return self.probability
 
     def setName(self, name):
-        self.name = name
+        self.name = self.__nDisease[name]
 
     def setProbability(self, probability):
         self.probability = probability
+
+
+class ECGclient:
+    # IA Receptor
+    listAux = []
+
+    def __init__(self, ia):
+        self.ia = ia
+        self.client = mqtt.Client()
+        self.client.connect("broker.hivemq.com")
+
+    def on_connect(client, userdata, flags, rc):
+        print("Connected with result code " + str(rc))
+        client.subscribe("ecg")
+
+    def on_message(self, client, userdata, msg):
+        if msg.payload.decode() != None:
+            data = msg.payload.decode()
+            dato = json.loads(data)
+            for element in dato['ecg']:
+                self.listAux.append(element)
+            ia.dataReceived(self.listAux)
+            self.client.disconnect()
+        else:
+            print("None")
+
+    def publisher(self, disease):
+        self.client = mqtt.Client()
+        self.client.connect("broker.hivemq.com")
+        while self.client.loop() == 0:
+            jsonStr = json.dumps(disease.__dict__)
+            self.client.publish("disease", jsonStr)
+            time.sleep(1)
+
+    def init(self):
+        # client.connect("localhost")
+        self.client.on_connect = self.on_connect
+        self.client.on_message = self.on_message
+
+        self.client.loop_forever()
+
+
+ia = IA('mitbih_train.csv', 'mitbih_train.csv')
+print(ia.getTrain())
+print(ia.getTest())
+print(ia.getDimensionTraining())
+print(ia.getDimensionTest())
+print(ia.getNumberClasses())
+ia.graphClasses()
+ia.balanceClasses()
+print(ia.getDimensionTraining())
+print(ia.getNumberClasses())
+ia.labelFeature()
+clf = ia.trainBoostingTree()
+ecgClient = ECGclient(ia)
+ecgClient.init();
+pred, prob = ia.predictModel(clf)
+d = Disease(pred, prob)
+ecgClient.publisher(d)
